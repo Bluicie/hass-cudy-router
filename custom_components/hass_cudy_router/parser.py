@@ -51,16 +51,20 @@ def extract_kv_pairs(html: str) -> dict[str, str]:
             cells = tr.find_all(["th", "td"])
             if len(cells) < 2:
                 continue
-            ps = cells[1].find_all(["p"])
-            vs = cells[2].find_all(["p"])
-            if len(ps) > 0:
-                k = _clean(ps[0].get_text())
-            else:
-                k = _clean(cells[1].get_text())
-            if len(vs) > 0:
-                v = _clean(vs[0].get_text())
-            else:
-                v = _clean(cells[2].get_text())
+            # Cudy layouts vary: [label, value, (empty)] or [icon, label, value].
+            # Take the first two cells that carry text; prefer the first <p>
+            # (pages render the same text twice for desktop/mobile).
+            texts: list[str] = []
+            for cell in cells:
+                p = cell.find("p")
+                t = _clean(p.get_text() if p else cell.get_text())
+                if t:
+                    texts.append(t)
+            if len(texts) < 2:
+                continue
+            if len(texts) > 2 and all(c.name == "th" for c in cells):
+                continue  # multi-column table header (SSID | Encryption | ...)
+            k, v = texts[0], texts[1]
             if k:
                 if k not in out.keys():
                     out[k] = v

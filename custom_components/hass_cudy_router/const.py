@@ -220,7 +220,7 @@ SENSORS = {
     MODULE_MESH: [
         {
             SENSORS_KEY_KEY: SENSOR_MESH_NETWORK,
-            SENSORS_KEY_DESCRIPTION: ["Mesh Network", "Mesh"],
+            SENSORS_KEY_DESCRIPTION: ["Mesh Network", "Mesh", "Device Name"],
             SENSORS_KEY_ICON: "mdi:table-network",
             SENSORS_KEY_CATEGORY: EntityCategory.DIAGNOSTIC,
             SENSORS_KEY_CLASS: None
@@ -460,7 +460,7 @@ SENSORS = {
     MODULE_GSM: [
         {
             SENSORS_KEY_KEY: SENSOR_GSM_NETWORK_TYPE,
-            SENSORS_KEY_DESCRIPTION: ["Status", "Enabled", "VPN Status"],
+            SENSORS_KEY_DESCRIPTION: ["Network Type"],
             SENSORS_KEY_ICON: "mdi:transit-connection-variant",
             SENSORS_KEY_CATEGORY: EntityCategory.DIAGNOSTIC,
             SENSORS_KEY_CLASS: None
@@ -488,7 +488,7 @@ SENSORS = {
         },
         {
             SENSORS_KEY_KEY: SENSOR_GSM_IP_ADDRESS,
-            SENSORS_KEY_DESCRIPTION: ["Status", "Enabled", "VPN Status"],
+            SENSORS_KEY_DESCRIPTION: ["IP Address", "IPv4 Address"],
             SENSORS_KEY_ICON: "mdi:checkbox-marked",
             SENSORS_KEY_CATEGORY: EntityCategory.DIAGNOSTIC,
             SENSORS_KEY_CLASS: None

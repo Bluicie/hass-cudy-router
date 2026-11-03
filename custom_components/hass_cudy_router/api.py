@@ -22,16 +22,19 @@ class CudyApi:
     async def get_data(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
 
-        for module in CAPABILITY_URLS.keys():
-            url = CAPABILITY_URLS[module][0]
-            try:
-                html = await self._client.get(self.luci(url))
-                if html is not None:
-                    data = parse_html(module, html)
-                    if len(data) > 0:
-                        out[module] = data
-            except ClientResponseError as err:
-                """No module detected"""
+        for module, urls in CAPABILITY_URLS.items():
+            # try each known URL until one yields data (paths differ per model)
+            for url in urls:
+                try:
+                    html = await self._client.get(self.luci(url))
+                except ClientResponseError:
+                    continue  # module not present at this path
+                if not html:
+                    continue
+                data = parse_html(module, html)
+                if data:
+                    out[module] = data
+                    break
         return out
 
     async def reboot(self) -> None:

@@ -1,7 +1,7 @@
 {
   "domain": "hass_cudy_router",
   "name": "Cudy Router",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "documentation": "https://github.com/emce/hass-cudy-router",
   "issue_tracker": "https://github.com/emce/hass-cudy-router/issues",
   "requirements": ["beautifulsoup4"],
