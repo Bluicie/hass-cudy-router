@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.device_tracker.config_entry import TrackerEntity
+from homeassistant.components.device_tracker import ScannerEntity, SourceType
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -27,26 +27,39 @@ async def async_setup_entry(
     spec = data.get("spec")
     if spec and "device_tracker" not in getattr(spec, "platforms", set()):
         return
-    devices = _get_devices(coordinator.data)
-    entities = [
-        CudyDeviceTracker(coordinator, entry, dev)
-        for dev in devices
-    ]
-    async_add_entities(entities)
+    known: set[str] = set()
+
+    @callback
+    def _add_new_devices() -> None:
+        new = []
+        for dev in _get_devices(coordinator.data):
+            mac = str(dev.get(DEVICE_MAC)).strip().lower()
+            if mac not in known:
+                known.add(mac)
+                new.append(CudyDeviceTracker(coordinator, entry, dev))
+        if new:
+            async_add_entities(new)
+
+    _add_new_devices()
+    # clients that show up later get an entity too
+    entry.async_on_unload(coordinator.async_add_listener(_add_new_devices))
 
 
 def _get_devices(coordinator_data: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not coordinator_data:
         return []
-    mod = coordinator_data.get(MODULE_DEVICES, {}) or {}
-    devs = mod.get(MODULE_DEVICE_LIST, []) or []
+    # api.get_data() returns the list at top level; older code nested it
+    devs = coordinator_data.get(MODULE_DEVICE_LIST)
+    if not devs:
+        mod = coordinator_data.get(MODULE_DEVICES, {}) or {}
+        devs = mod.get(MODULE_DEVICE_LIST, []) if isinstance(mod, dict) else []
     return [
-        d for d in devs
+        d for d in devs or []
         if isinstance(d, dict) and d.get(DEVICE_MAC)
     ]
 
 
-class CudyDeviceTracker(CoordinatorEntity, TrackerEntity):
+class CudyDeviceTracker(CoordinatorEntity, ScannerEntity):
     _attr_has_entity_name = True
 
     def __init__(
@@ -60,12 +73,14 @@ class CudyDeviceTracker(CoordinatorEntity, TrackerEntity):
         self._initial = device  # IMPORTANT fallback for attributes
         self._mac = str(device.get(DEVICE_MAC) or "").strip()
         hostname = (device.get(DEVICE_HOSTNAME) or "").strip()
+        if hostname.lower() in ("", "unknown", "*"):
+            hostname = ""
         self._attr_name = hostname or self._mac
         self._attr_unique_id = _device_unique_id(entry.entry_id, self._mac)
 
     @property
-    def source_type(self) -> str:
-        return "router"
+    def source_type(self) -> SourceType:
+        return SourceType.ROUTER
 
     @property
     def mac_address(self) -> str | None:
