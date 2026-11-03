@@ -7,6 +7,9 @@ from http.cookies import SimpleCookie
 from typing import Any, Optional
 from urllib.parse import quote_plus
 
+import asyncio
+import base64
+
 import aiohttp
 from aiohttp import ClientResponseError, ClientSession, TCPConnector
 from bs4 import BeautifulSoup
@@ -14,6 +17,45 @@ from bs4 import BeautifulSoup
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 10
+
+
+def encrypt_password_challenge(password: str, challenge: dict[str, Any]) -> str:
+    """Build the luci_password value for newer Cudy firmware (e.g. 2.5.x).
+
+    The login page first POSTs the username to /cgi-bin/luci/admin/login and
+    receives {salt, kdfiter, nonce, key, cipher: "rsa-oaep", encode: "base64"}.
+    The browser (sysauth.js) then computes:
+        h = hex(PBKDF2-HMAC-SHA256(password, unhex(salt), kdfiter, 32))
+        h = hex(SHA256(h + nonce))
+        luci_password = base64(RSA-OAEP-SHA256(pubkey, h))
+    PBKDF2 with ~1M iterations is CPU heavy: call this in an executor.
+    """
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    salt = str(challenge["salt"])
+    kdfiter = int(challenge.get("kdfiter") or 0)
+    if kdfiter > 0:
+        passhash = hashlib.pbkdf2_hmac(
+            "sha256", password.encode(), bytes.fromhex(salt), kdfiter, 32
+        ).hex()
+    else:
+        passhash = hashlib.sha256((password + salt).encode()).hexdigest()
+
+    nonce = challenge.get("nonce")
+    if nonce:
+        passhash = hashlib.sha256((passhash + str(nonce)).encode()).hexdigest()
+
+    public_key = serialization.load_pem_public_key(base64.b64decode(challenge["key"]))
+    encrypted = public_key.encrypt(
+        passhash.encode(),
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None,
+        ),
+    )
+    return base64.b64encode(encrypted).decode()
 
 
 class CudyClient:
@@ -136,7 +178,18 @@ class CudyClient:
 
             # 2) compute password
             luci_password = self._password
-            if salt:
+            challenge = await self._fetch_login_challenge(session, base, headers_post)
+            if challenge:
+                # newer firmware: PBKDF2 + nonce + RSA-OAEP (sysauth.js)
+                try:
+                    luci_password = await asyncio.get_running_loop().run_in_executor(
+                        None, encrypt_password_challenge, self._password, challenge
+                    )
+                except Exception as e:  # noqa: BLE001
+                    _LOGGER.error("Building encrypted login failed (%s): %s", scheme, e)
+                    continue
+                salt = token = ""
+            elif salt:
                 hashed = hashlib.sha256((self._password + salt).encode()).hexdigest()
                 if token:
                     hashed = hashlib.sha256((hashed + token).encode()).hexdigest()
@@ -184,6 +237,31 @@ class CudyClient:
 
         _LOGGER.debug("Authentication failed: no sysauth cookie obtained")
         return False
+
+    async def _fetch_login_challenge(
+        self, session: ClientSession, base: str, headers: dict[str, str]
+    ) -> dict[str, Any] | None:
+        """Ask newer firmware for its login challenge; None on older firmware."""
+        try:
+            async with session.post(
+                f"{base}/cgi-bin/luci/admin/login",
+                headers={**headers, "Accept": "application/json, */*"},
+                data={"username": self._username},
+                allow_redirects=False,
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json(content_type=None)
+        except Exception:  # noqa: BLE001 - not JSON / not supported
+            return None
+        if isinstance(data, dict) and data.get("salt") and data.get("key"):
+            if data.get("nonce"):
+                return data
+            _LOGGER.error(
+                "Router reports no admin password set yet (no nonce); "
+                "finish the setup wizard in the web UI first"
+            )
+        return None
 
     @staticmethod
     def _parse_sysauth_from_headers(set_cookie_headers: list[str]) -> str | None:
